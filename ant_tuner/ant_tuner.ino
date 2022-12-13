@@ -10,7 +10,7 @@
  * done over the serial port.
  * 
  * ATU-1000 connections
- *       L  1  2  3  4  5  6  7  C  1  2  3  4  5  6  7  N  GND  VDD FWD REV  
+ *       L  1  2  3  4  5  6  7  C  1  2  3  4  5  6  7  N  GND  VDD FWD REF
  * uC pins 24  4 25  5 26  7  6    18 14 17 13 16 12 15 11  8,19  20   2   3
  * Teensy  20  0 21  1  4  3  2    14 10 13  9 12  8 11  7   G   VDD  19  18
  * 
