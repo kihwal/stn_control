@@ -17,6 +17,64 @@
 #define TU_NC_HIZ 0
 #define TU_NC_LOZ 1
 
+#define TU_PWR_MULT 31
+
+// Power correction function from N7DDC.
+int correction(int input) {
+  if (input <= 80)
+    return 0;
+  if (input <= 171)
+    input += 244;
+  else if (input <= 328)
+    input += 254;
+  else if (input <= 582)
+    input += 280;
+  else if (input <= 820)
+    input += 297;
+  else if(input <= 1100)
+    input += 310;
+  else if(input <= 2181)
+    input += 430;
+  else if(input <= 3322)
+    input += 484;
+  else if(input <= 4623)
+    input += 530;
+  else if(input <= 5862)
+    input += 648;
+  else if(input <= 7146)
+    input += 743;
+  else if(input <= 8502)
+    input += 800;
+  else if(input <= 10500)
+    input += 840;
+  else
+    input += 860;
+
+  return input;
+}
+
+// power converter based on N7DDC's code.
+int get_pwr(int raw) {
+  float p;
+
+  p = (float)correction(raw * 15);
+  p = p * TU_PWR_MULT / 1000.0; // convert to volts
+  p = p / 1.414;   // Peak to RMS
+  p = p * p / 50;  // 50 ohm load
+  p = p + 0.5;     // rounding
+  return (int)p;
+}
+
+// pass the raw numbers
+int get_swr(int fwd, int ref) {
+  if (fwd == 0)
+    return 100;
+
+  if (ref >= fwd)
+    return 999;
+  return 100*(fwd + ref)/(fwd - ref);
+}
+
 int openTuner() {
   int fd;
   struct termios tio;
@@ -148,7 +206,7 @@ int main() {
   int ch, lval, cval, nval;
   int fd, c, updated;
   char buff[32];
-  int fwd, ref;
+  int fwd, ref, swr;
 
   // open the serial port
   fd = openTuner();
@@ -174,8 +232,8 @@ int main() {
   attroff(A_BOLD);
   
   mvprintw(3, 2, "L= %3d, C = %3d, %s", lval, cval, (nval == TU_NC_HIZ) ? "Hi-Z" : "Lo-Z");
-  mvprintw(6, 2, "Inductance(s,d), Capacitance(j,k), Network(n), Reset(r), Quit(q):");
-  move(7,2);
+  mvprintw(8, 2, "Inductance(s,d), Capacitance(j,k), Network(n), Reset(r), Quit(q):");
+  move(8,2);
   while (1) {
     updated = 0;
     ch = getch();
@@ -235,8 +293,9 @@ int main() {
     }
 
     read_power(fd, &fwd, &ref);
-    mvprintw(7, 4, "FWD %4d, REF %4d", fwd, ref);
-    move(7, 2);
+    swr = get_swr(fwd, ref);
+    mvprintw(5, 2, "FWD %4dW, REF %4dW, SWR %d.%02d:1", get_pwr(fwd), get_pwr(ref), swr/100, swr%100);
+    move(8, 2);
     refresh();
   }
   endwin();
