@@ -24,6 +24,12 @@
 #include <SPI.h>
 #include <Ethernet.h>
 
+// Use a custom DHCP client name. The default is "WIZnet".
+#ifdef HOST_NAME
+#undef HOST_NAME
+#define HOST_NAME "antsw"
+#endif
+
 //       R2 R3 R4
 // A1 :  0  0  0
 // A2 :  0  1  0
@@ -228,35 +234,116 @@ void loop1() {
 // GET /status HTTP/1.1
 // GET /set?a=2 HTTP/1.1
 // GET /set?x=1 HTTP/1.1
+// GET /refresh?a=1 HTTP/1.1
+//
+// returns < 0 for errors
+//           0 for the index page request
 int parse_request(String request) {
-  if (!request.startsWith("GET ") && !request.startsWith("get ")) {
+  boolean refresh = false;
+  boolean ant_req = false;
+  boolean xfr_req = false;
+
+  if (!request.startsWith("GET ")) {
     // not a valid http request
     return -1;
   }
-  int idx1 = request.indexOf("status", 4);
-  if (idx1 > 0) {
-    // read status
+
+  // requests are simple. no need to write a state machine
+  if (request.startsWith("GET / ")) {
+    // full html page request
+    return 1;
+  }
+
+  if (request.startsWith("GET /status ")) {
+    // simple status request
     return 0;
+  } 
+
+  // change the antenna port?
+  ant_req = request.startsWith("GET /set?a=");
+  refresh = request.startsWith("GET /ref?a=");
+  ant_req |= refresh;
+
+  if (!ant_req) {
+    // check for transfer port change request
+    xfr_req = request.startsWith("GET /set?x=");
+    refresh = request.startsWith("GET /ref?x=");
+    xfr_req != refresh;
   }
-  idx1 = request.indexOf("set?", 4);
-  if (idx1 < 0) {
-    // invalid request
-    return -2;
+
+  // handle the port change request
+  if (ant_req || xfr_req) {
+    // a single digit number for the port
+    int port = request.substring(11, 12).toInt();
+    if (ant_req) {
+      if (port < 1 || port > 4)
+        return -2;
+      antenna_port = port;
+      actuate_ant_port(antenna_port);
+    } else {
+      if (port < 1 || port > 2)
+        return -2;
+      xfer_port = port;
+      actuate_xfer_port(xfer_port);
+    }
+    update_display();
+    if (refresh) {
+      return 1; // display the html page
+    }
+    return 0; // text status
   }
-  if (request.charAt(idx1 + 5) != '=') {
-    // invalid query
-    return -3;
-  }
-  char c = request.charAt(idx1 + 4);
-  int port = request.substring(idx1 + 6, idx1 + 7).toInt();
-  if (c == 'a' && port >= 1 && port <= 4) {
-    return port;
-  } else if (c == 'x' && port >= 1 && port <= 2) {
-    return 10 + port;
-  }
-  
-  return -4;
+
+  // unknown request
+  return -3;
 }
+
+// HTML-based index page and response
+// "/ref" is used.
+void print_html_page(EthernetClient client) {
+  // response and header
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-Type: text/html");
+  client.println("Cache-Control: no-cache, must-revalidate");
+  client.println("Connection: close");
+  client.println();
+  client.println("<html><body>");
+
+  // body
+  client.print("Antenna : ");
+  for (int i = 1; i <= 4; i++) {
+    if (antenna_port == i) {
+      client.print("[");
+      client.print(i);
+      client.print("]&nbsp;&nbsp;&nbsp;");
+    } else {
+      client.print("<a href=/ref?a=");
+      client.print(i);
+      client.print(">");
+      client.print(i);
+      client.print("</a>&nbsp;&nbsp;&nbsp;");
+    }
+  }
+  client.println("<br><br>");
+
+  client.print("Transfer: ");
+  for (int i = 1; i <= 2; i++) {
+    if (xfer_port == i) {
+      client.print("[");
+      client.print(i);
+      client.print("]&nbsp;&nbsp;&nbsp;");
+    } else {
+      client.print("<a href=/refresh?x=");
+      client.print(i);
+      client.print(">");
+      client.print(i);
+      client.print("</a>&nbsp;&nbsp;&nbsp;");
+    }
+  }
+  client.println("<br><br>");
+  client.println("</body></html>");
+}
+
+
 
 // Core 0 handles the network
 void loop() {
@@ -297,65 +384,54 @@ void loop() {
   // listen for incoming clients
   EthernetClient client = server.available();
   if (client) {
-    // an http request ends with a blank line
-    bool currentLineIsBlank = true;
-    String rcvString = "";
+    boolean currentLineIsBlank = true;
+    String rcv_string = "";
 
     while (client.connected()) {
       if (client.available()) {
         char c = client.read();
-        rcvString += c;
+        rcv_string += c;
 
-        if (rcvString.length() > 128) {
+        // The supported requests are all very short. Prevent receiving too much.
+        if (rcv_string.length() > 256) {
           client.println("HTTP/1.1 400 Bad Request");
           client.println();
           break;
         }
 
         if (c == '\n' && currentLineIsBlank) {
-          int req = parse_request(rcvString);
-          if (req < 0) {
+          int res = parse_request(rcv_string);
+          if (res < 0) {
             // error
             client.println("HTTP/1.1 404 Not Found");
             client.println();
-            break;
-          }
-
-          // send a standard http response header
-          client.println("HTTP/1.1 200 OK");
-          client.println("Content-Type: text/plane");
-          client.println("Connection: close");
-          client.println();
-
-          if (req == 0) {
+            client.println("====");
+            client.println(rcv_string);
+            client.println("====");
+          } else if (res == 0) {
+            // status in text
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-Type: text/plane");
+            client.println("Connection: close");
+            client.println();
             client.print(antenna_port);
             client.print(',');
             client.println(xfer_port);
-            break;
-          } else if (req > 10) {
-            xfer_port = req - 10;
-            actuate_xfer_port(xfer_port);
           } else {
-            antenna_port = req;
-            actuate_ant_port(antenna_port);
+            // display the html page
+            print_html_page(client);
           }
-          update_display();
-          client.println("OK");
           break;
         }
         if (c == '\n') {
-          // you're starting a new line
           currentLineIsBlank = true;
         } else if (c != '\r') {
-          // you've gotten a character on the current line
           currentLineIsBlank = false;
         }
       }
     }
-    // give the web browser time to receive the data
-    delay(1);
-    // close the connection:
-    client.stop();
+    client.flush(); // flush the buffer
+    client.stop();  // close the connection
   }
 
   // renew the dhcp lease if necessary
