@@ -18,6 +18,13 @@
     Use the board package from WIZnet:
     https://github.com/WIZnet-ArduinoEthernet/arduino-pico/releases/download/global/package_rp2040-ethernet_index.json
     Select - Board WIZnet W5100S-EVB-Pico
+
+    http commands
+    /status  : get status. e.g. 2,1 (ant 2 and transfer 1)
+    /set?a=n : select antenna n (1 to 4)
+    /set?t=n : select transfer port n (1 or 2)
+
+    Browsing to / shows a web page where a port can be switched with a click.
 */
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -259,17 +266,16 @@ int parse_request(String request) {
     return 0;
   } 
 
-  // change the antenna port?
-  ant_req = request.startsWith("GET /set?a=");
-  refresh = request.startsWith("GET /ref?a=");
-  ant_req |= refresh;
-
-  if (!ant_req) {
-    // check for transfer port change request
-    xfr_req = request.startsWith("GET /set?x=");
-    refresh = request.startsWith("GET /ref?x=");
-    xfr_req != refresh;
+  // "ref" request is used by the web page. The port switching
+  // part is identical to "set", but the response should show
+  // the updated web page.
+  refresh = (request.indexOf("GET /ref") >= 0);
+  if (!refresh && (request.indexOf("GET /set") < 0)) {
+    return -3;
   }
+  ant_req = (request.indexOf("a=") > 7);
+  xfr_req = (request.indexOf("x=") > 7);
+
 
   // handle the port change request
   if (ant_req || xfr_req) {
@@ -288,7 +294,7 @@ int parse_request(String request) {
     }
     update_display();
     if (refresh) {
-      return 1; // display the html page
+      return 2; // redirect to /
     }
     return 0; // text status
   }
@@ -332,7 +338,7 @@ void print_html_page(EthernetClient client) {
       client.print(i);
       client.print("]&nbsp;&nbsp;&nbsp;");
     } else {
-      client.print("<a href=/refresh?x=");
+      client.print("<a href=/ref?x=");
       client.print(i);
       client.print(">");
       client.print(i);
@@ -392,8 +398,9 @@ void loop() {
         char c = client.read();
         rcv_string += c;
 
-        // The supported requests are all very short. Prevent receiving too much.
-        if (rcv_string.length() > 256) {
+        // The supported requests are all very short, but there can be
+        // lengthy headers. Limit the input size.
+        if (rcv_string.length() > 1024) {
           client.println("HTTP/1.1 400 Bad Request");
           client.println();
           break;
@@ -405,6 +412,8 @@ void loop() {
             // error
             client.println("HTTP/1.1 404 Not Found");
             client.println();
+            client.print("Error-code: ");
+            client.println(res);
             client.println("====");
             client.println(rcv_string);
             client.println("====");
@@ -417,9 +426,14 @@ void loop() {
             client.print(antenna_port);
             client.print(',');
             client.println(xfer_port);
-          } else {
+          } else if (res == 1) {
             // display the html page
             print_html_page(client);
+          } else {
+            // redirect to the root.
+            client.println("HTTP/1.1 307 Temporary Redirect");
+            client.println("Location: /");
+            client.println("Connection: close");
           }
           break;
         }
