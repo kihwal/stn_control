@@ -10,11 +10,16 @@
 #include "labjackusb.h"
 #include <libusb-1.0/libusb.h>
 
+#define PORT0_LABEL "Port 0"
+#define PORT1_LABEL "Anan-10"
+#define PORT2_LABEL "Port 2"
+#define PORT3_LABEL "Port 3"
+
+
 // All U12 commands are 8 bytes.
 #define U12_COMMAND_LENGTH 8
 
-// ant == 0 means ant1, ant == 1 means ant2
-int amp = 0, trx = 0, dummy = 0, ant = 0;
+int port0 = 0, port1 = 0, port2 = 0, port3 = 0;
 
 /* ------------- LabJack Related Helper Functions Definitions ------------- */
 
@@ -37,7 +42,7 @@ int writeRead(HANDLE devHandle, BYTE * sendBuffer, BYTE * recBuffer ) {
     r = LJUSB_Read( devHandle, recBuffer, U12_COMMAND_LENGTH );
 
     if( r != U12_COMMAND_LENGTH ) {
-        if(errno == LIBUSB_ERROR_TIMEOUT) {
+        if(errno == LIBUSB_ERROR_TIMEOUT || errno == ETIMEDOUT) {
             return -1;
         }
 
@@ -64,30 +69,24 @@ void buildDIOwrite(BYTE * sendBuffer, uint8_t val, int write) {
 }
 
 void parse_result_and_update(uint8_t result) {
-  amp = (result >> 4) & 0x01;
-  trx = (result >> 5) & 0x01;
-  ant = (result >> 6) & 0x01;
-  dummy = (result >> 7) & 0x01;
+  port0 = (result >> 4) & 0x01;
+  port1 = (result >> 5) & 0x01;
+  port2 = (result >> 6) & 0x01;
+  port3 = (result >> 7) & 0x01;
 }
 
 uint8_t create_data_for_write() {
-  // if dummy is set ant won't matter.
-  return (uint8_t)((amp & 0x01) |
-               ((trx << 1) & 0x02) |
-               ((ant << 2) & 0x04) |
-               ((dummy << 3) & 0x08));
+  return (uint8_t)((port0 & 0x01) |
+               ((port1 << 1) & 0x02) |
+               ((port2 << 2) & 0x04) |
+               ((port3 << 3) & 0x08));
 }
 
 void update_status_display() {
-  mvprintw(3, 2, "Power   : Amp %5s, TRX %5s", amp ? "[ON]" : "[OFF]", trx ? "[ON]" : "[OFF]");
-  mvprintw(5, 2, "Antenna : ");
-  if (dummy) {
-    printw(" ant1   ant2  [DUMMY]");
-  } else if (ant) {
-    printw(" ant1  [ANT2]  dummy ");
-  } else {
-    printw("[ANT1]  ant2   dummy ");
-  }
+  mvprintw(3, 2, "0  %10s: %s", PORT0_LABEL, port0 ? "[ON] " : "[OFF]");
+  mvprintw(5, 2, "1  %10s: %s", PORT1_LABEL, port1 ? "[ON] " : "[OFF]");
+  mvprintw(7, 2, "2  %10s: %s", PORT2_LABEL, port2 ? "[ON] " : "[OFF]");
+  mvprintw(9, 2, "3  %10s: %s", PORT3_LABEL, port3 ? "[ON] " : "[OFF]");
 }
 
 int main() {
@@ -132,35 +131,30 @@ int main() {
   attroff(A_BOLD);
 
   update_status_display();
-  mvprintw(7, 2, "Amp(a), TRX(t), Antenna(1/2/d), quit(q)");
-  move(8,2);
+  mvprintw(11, 2, "0/1/2/3 to switch or quit(q)");
+  move(12,2);
 
   while(1) {
     ch = getch();
     if (ch == 'q') {
       break;
-    } else if (ch == 'a') {
-      amp = amp ? 0 : 1;
-    } else if (ch == 't') {
-      trx = trx ? 0 : 1;
-    } else if (ch == 'd') {
-      dummy = 1;
-    } else if (ch == '2') {
-      dummy = 0;
-      ant = 1;
+    } else if (ch == '0') {
+      port0 = port0 ? 0 : 1;
     } else if (ch == '1') {
-      dummy = 0;
-      ant = 0;
+      port1 = port1 ? 0 : 1;
+    } else if (ch == '2') {
+      port2 = port2 ? 0 : 1;
+    } else if (ch == '3') {
+      port3 = port3 ? 0 : 1;
     } else {
       continue;
     }
     val = create_data_for_write();
-    //mvprintw(8,2, "amp %d, trx %d, ant %d, dummy %d, val 0x%x", amp, trx, ant, dummy, val);
     buildDIOwrite(sendBuffer, val, 1);
     writeRead(devHandle, sendBuffer, recBuffer);
     parse_result_and_update(recBuffer[3]);
     update_status_display();
-    move(8,2);
+    move(12,2);
   }
 
   LJUSB_CloseDevice(devHandle);

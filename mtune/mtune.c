@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#define BAUD B9600
+#define BAUD B115200
 #define TU_DEV "/dev/ttyACM0"
 
 #define TU_CMD_SET  's'
@@ -219,7 +219,6 @@ int main() {
     printf("Error reading initial status.");
     return 1;
   }
-
 
 
   // init
