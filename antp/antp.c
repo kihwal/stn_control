@@ -10,16 +10,11 @@
 #include "labjackusb.h"
 #include <libusb-1.0/libusb.h>
 
-#define PORT0_LABEL "Port 0"
-#define PORT1_LABEL "Anan-10"
-#define PORT2_LABEL "Port 2"
-#define PORT3_LABEL "Port 3"
-
-
 // All U12 commands are 8 bytes.
 #define U12_COMMAND_LENGTH 8
 
 int port0 = 0, port1 = 0, port2 = 0, port3 = 0;
+char labels[4][100];
 
 /* ------------- LabJack Related Helper Functions Definitions ------------- */
 
@@ -83,15 +78,16 @@ uint8_t create_data_for_write() {
 }
 
 void update_status_display() {
-  mvprintw(3, 2, "0  %10s: %s", PORT0_LABEL, port0 ? "[ON] " : "[OFF]");
-  mvprintw(5, 2, "1  %10s: %s", PORT1_LABEL, port1 ? "[ON] " : "[OFF]");
-  mvprintw(7, 2, "2  %10s: %s", PORT2_LABEL, port2 ? "[ON] " : "[OFF]");
-  mvprintw(9, 2, "3  %10s: %s", PORT3_LABEL, port3 ? "[ON] " : "[OFF]");
+  mvprintw(3, 2, "0  %10s: %s", labels[0], port0 ? "[ON] " : "[OFF]");
+  mvprintw(5, 2, "1  %10s: %s", labels[1], port1 ? "[ON] " : "[OFF]");
+  mvprintw(7, 2, "2  %10s: %s", labels[2], port2 ? "[ON] " : "[OFF]");
+  mvprintw(9, 2, "3  %10s: %s", labels[3], port3 ? "[ON] " : "[OFF]");
 }
 
 int main() {
-  int ch;
+  int ch, i;
   uint8_t val;
+  FILE *file;
 
   // Setup the variables we will need.
   int r = 0; // For checking return values
@@ -121,6 +117,21 @@ int main() {
   }
 
   parse_result_and_update(recBuffer[3]);
+
+ 
+  // read the label file
+  file = fopen(strcat(getenv("HOME"), "/.config/k9sul_remote/labels.txt"), "r");
+  if (file == NULL) {
+    perror("Error opening file");
+    exit(-1);
+  }
+
+  while (i < 4 && fgets(labels[i], 100, file) != NULL) {
+    labels[i][strcspn(labels[i], "\n")] = '\0';
+    i++;
+  }
+
+  fclose(file);
 
   // init
   initscr();
