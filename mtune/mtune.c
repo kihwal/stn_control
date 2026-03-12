@@ -5,6 +5,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
+#include <math.h>
+
+#include "cal.h"
 
 #define BAUD B115200
 #define TU_DEV "/dev/ttyACM0"
@@ -17,62 +21,50 @@
 #define TU_NC_HIZ 0
 #define TU_NC_LOZ 1
 
-#define TU_PWR_MULT 31
+struct tu_power_swr {
+  float fwd; // forward power
+  float ref; // reflected power
+  float swr; // swr
+};
 
-// Power correction function from N7DDC.
-int correction(int input) {
-  if (input <= 80)
-    return 0;
-  if (input <= 171)
-    input += 244;
-  else if (input <= 328)
-    input += 254;
-  else if (input <= 582)
-    input += 280;
-  else if (input <= 820)
-    input += 297;
-  else if(input <= 1100)
-    input += 310;
-  else if(input <= 2181)
-    input += 430;
-  else if(input <= 3322)
-    input += 484;
-  else if(input <= 4623)
-    input += 530;
-  else if(input <= 5862)
-    input += 648;
-  else if(input <= 7146)
-    input += 743;
-  else if(input <= 8502)
-    input += 800;
-  else if(input <= 10500)
-    input += 840;
-  else
-    input += 860;
+struct tu_power_swr pswr;
+struct timespec delay;
+int fd;                   // serial device file descriptor
+int lval, cval, nval;     // L-network parameters
 
-  return input;
-}
+// Teensy 2.0 has 10 bit ADCs.
+// The tandem directional coupler uses 20:1 transformers
+// The conversion table is in cal.c.
+//#define USE_POWER
+float get_swr (int fwd, int ref) {
+  float vf, vr;
 
-// power converter based on N7DDC's code.
-int get_pwr(int raw) {
-  float p;
+  // convert the sensor readings to power watts
+  pswr.fwd = get_watts(fwd);
+  pswr.ref = get_watts(ref);
 
-  p = (float)correction(raw * 15);
-  p = p * TU_PWR_MULT / 1000.0; // convert to volts
-  p = p / 1.414;   // Peak to RMS
-  p = p * p / 50;  // 50 ohm load
-  p = p + 0.5;     // rounding
-  return (int)p;
-}
+  // Noneed to calculate SWR for these cases.
+  if (fwd == 0) {
+    pswr.swr = 1.0f;
+    return pswr.swr;
+  } else if (fwd < ref) {
+    pswr.swr = 9.99f;
+    return pswr.swr;
+  }
 
-// pass the raw numbers
-int get_swr(int fwd, int ref) {
-  if (fwd == 0)
-    return 100;
-
-  if (ref >= fwd)
-    return 999;
-  return 100*(fwd + ref)/(fwd - ref);
+  // calculate the SWR
+#ifdef USE_POWER
+  pswr.swr = (1.0f + sqrtf(pswr.ref/pswr.fwd))/(1.0f - sqrtf(pswr.ref/pswr.fwd));
+#else
+  // calculate voltages
+  vf = sqrtf(pswr.fwd*50.0f);
+  vr = sqrtf(pswr.ref*50.0f);
+  pswr.swr = (vf+vr)/(vf-vr);
+#endif
+  if (pswr.swr > 9.99f) {
+    pswr.swr = 9.99f;
+  }
+  return pswr.swr; 
 }
 
 int openTuner() {
@@ -170,6 +162,28 @@ int read_power(int fd, int *fwd, int *ref) {
   return 0;
 }
 
+void update_power_status() {
+  mvprintw(5, 2, "FWD %4.1fW, REF %4.1fW, SWR %1.2f:1   ", (pswr.fwd - pswr.ref), pswr.ref, pswr.swr);
+  move(8, 2);
+  refresh();
+}
+
+// return the current swr without updating the global status.
+float check_swr(int samples) {
+  int fwd, ref, tmp1, tmp2;
+  int i;
+
+  for (i = 0, fwd = 0, ref = 0; i < samples; i++) {
+    read_power(fd, &tmp1, &tmp2);
+    fwd += tmp1;
+    ref += tmp2;
+  }
+  fwd /= samples;
+  ref /= samples;
+  
+  return get_swr(fwd, ref); 
+}
+
 int set_tuner(int fd, int ind, int cap, int nc) {
   char buff[32];
   int c, i;
@@ -201,12 +215,93 @@ int set_tuner(int fd, int ind, int cap, int nc) {
   return 0;
 }
 
+void fine_set_lc(int diff, int lc) {
+  if (lc) { // C
+    set_tuner(fd, lval, cval + diff, nval);
+    mvprintw(3, 2, "L= %3d, C = %3d, %s", lval, cval + diff, (nval == TU_NC_HIZ) ? "Hi-Z" : "Lo-Z");
+  } else {
+    set_tuner(fd, lval + diff, cval, nval);
+    mvprintw(3, 2, "L= %3d, C = %3d, %s", lval + diff, cval, (nval == TU_NC_HIZ) ? "Hi-Z" : "Lo-Z");
+  }
+}
+
+// assume the LC is already farely close.
+// lc=0 for L, lc=1 for C
+
+#define TU_SAMPLES 30
+
+int fine_tune(int lc) {
+  float org_swr, min_swr, tmp;
+  int min, direction, start;
+  
+  org_swr = check_swr(TU_SAMPLES);
+  // find the direction to check. start with an increase.
+  direction = 1;
+  fine_set_lc(direction, lc);
+  tmp = check_swr(TU_SAMPLES);
+  update_power_status();
+  start = lc ? cval : lval;
+  
+  if (tmp <= org_swr) {
+    // the increase resulted a better swr.
+    min = direction + lc ? cval : lval;
+    min_swr = tmp;
+    direction++; // keep increasing
+    while (start + direction < 128) {
+      fine_set_lc(direction, lc);
+      tmp = check_swr(TU_SAMPLES);
+      update_power_status();
+      if (tmp > min_swr)
+        break;
+      min_swr = tmp;
+      min = start + direction;
+      direction++;
+    }
+  } else if (start == 0) {
+    // an increase resulted in a worse swr and it was on the minimum
+    // L or C position. there is nothing to do. we are at the minimum.
+    min = start;
+    min_swr = org_swr;
+  } else {
+    // the increasing L/C made swr worse. we will go the other direction.
+    min = lc ? cval : lval; // go back to the org condition. 
+    min_swr = org_swr;
+    direction = -1;
+    while (start + direction >= 0) {
+      fine_set_lc(direction, lc);
+      tmp = check_swr(TU_SAMPLES);
+      update_power_status();
+      if (tmp > min_swr)
+        break;
+      min_swr = tmp;
+      min = start + direction;
+      direction--;
+    }
+  }
+  if (lc)
+    cval = min;
+  else
+    lval = min;
+}
+
+int tune() {
+  int swr, fwd, ref;
+  int i, tmp, min_swr, min_c, res;
+  
+  check_swr(10);
+  if (pswr.fwd < 5)
+    return 1;
+  fine_tune(0);
+  fine_tune(1);
+
+  return 0;
+}
 
 int main() {
-  int ch, lval, cval, nval;
-  int fd, c, updated;
+  int ch;
+  int c, updated;
   char buff[32];
-  int fwd, ref, swr;
+  WINDOW *status_win;
 
   // open the serial port
   fd = openTuner();
@@ -214,12 +309,15 @@ int main() {
     return 1;
   }
 
+  pswr.fwd = 0.0f;
+  pswr.ref = 0.0f;
+  pswr.swr = 100;
+  
   // read the current setting.
   if (read_status(fd, &lval, &cval, &nval) < 0) {
     printf("Error reading initial status.");
     return 1;
   }
-
 
   // init
   initscr();
@@ -231,7 +329,7 @@ int main() {
   attroff(A_BOLD);
   
   mvprintw(3, 2, "L= %3d, C = %3d, %s", lval, cval, (nval == TU_NC_HIZ) ? "Hi-Z" : "Lo-Z");
-  mvprintw(8, 2, "Inductance(s,d), Capacitance(j,k), Network(n), Reset(r), Quit(q):");
+  mvprintw(8, 2, "Inductance(s,d), Capacitance(j,k), Network(n), Tune(t), Reset(r), Quit(q):");
   move(8,2);
   while (1) {
     updated = 0;
@@ -276,6 +374,10 @@ int main() {
        lval = 0; cval = 0; nval = 0;
        updated = 1;
        break;
+     case 't':
+      tune();
+      updated = 1;
+      break;
      default:
        // ignored
        break;
@@ -291,11 +393,9 @@ int main() {
       mvprintw(3, 2, "L= %3d, C = %3d, %s", lval, cval, (nval == TU_NC_HIZ) ? "Hi-Z" : "Lo-Z");
     }
 
-    read_power(fd, &fwd, &ref);
-    swr = get_swr(fwd, ref);
-    mvprintw(5, 2, "FWD %4dW, REF %4dW, SWR %d.%02d:1", get_pwr(fwd), get_pwr(ref), swr/100, swr%100);
-    move(8, 2);
-    refresh();
+    //update_power_swr();
+    check_swr(10);
+    update_power_status();
   }
   endwin();
   return 0;
