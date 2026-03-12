@@ -1,3 +1,12 @@
+/*
+ * mtune
+ * Copyright (C) 2022, 2026 Kihwal Lee, K9SUL
+ *
+ * This is a control program that talks to an antenna tuner that speaks
+ * the simple ant_tuner protocol, which was developed to replace the 
+ * stand-alone N7DDC tuner firmware.
+ */
+
 #include <ncurses.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -5,7 +14,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
-#include <time.h>
 #include <math.h>
 
 #include "cal.h"
@@ -21,6 +29,10 @@
 #define TU_NC_HIZ 0
 #define TU_NC_LOZ 1
 
+// Use the forward and reflected power to calculate SWR.
+// If not set, voltages will be used.
+//#define USE_POWER
+
 struct tu_power_swr {
   float fwd; // forward power
   float ref; // reflected power
@@ -28,14 +40,18 @@ struct tu_power_swr {
 };
 
 struct tu_power_swr pswr;
-struct timespec delay;
 int fd;                   // serial device file descriptor
 int lval, cval, nval;     // L-network parameters
 
-// Teensy 2.0 has 10 bit ADCs.
-// The tandem directional coupler uses 20:1 transformers
-// The conversion table is in cal.c.
-//#define USE_POWER
+/*
+ * Convert a raw ADC reading into watts. It also calculates the
+ * SWR and saves the results to the global status structure.
+ *
+ * The tuner has a Teensy 2.0 with 10 bit ADCs. 1023 is mapped to
+ * about 1.5kW. The tuner is good for about 1kW.  The conversion
+ * table and the function is in cal.c. This was built up based on
+ * actual measurements.
+ */
 float get_swr (int fwd, int ref) {
   float vf, vr;
 
@@ -67,6 +83,9 @@ float get_swr (int fwd, int ref) {
   return pswr.swr; 
 }
 
+/*
+ * Open the serial device for the tuner.
+ */
 int openTuner() {
   int fd;
   struct termios tio;
@@ -89,6 +108,12 @@ int openTuner() {
   return fd;
 }
 
+/*
+ * Read the L-network setting from the tuner
+ *  capacitor combination 0..127
+ *  inductor combination 0..127
+ *  network config 0 or 1 (Hi-z or Lo-z)
+ */
 int read_status(int fd, int *ind, int *cap, int *nc) {
   int c, i;
   char buff[32];
@@ -126,6 +151,9 @@ int read_status(int fd, int *ind, int *cap, int *nc) {
   return 0;
 }
 
+/*
+ * Read the power readings from the tuner.
+ */
 int read_power(int fd, int *fwd, int *ref) {
   int c, i;
   char buff[32];
@@ -162,13 +190,18 @@ int read_power(int fd, int *fwd, int *ref) {
   return 0;
 }
 
+/*
+ * Update the UI of the power and the swr.
+ */
 void update_power_status() {
   mvprintw(5, 2, "FWD %4.1fW, REF %4.1fW, SWR %1.2f:1   ", (pswr.fwd - pswr.ref), pswr.ref, pswr.swr);
   move(8, 2);
   refresh();
 }
 
-// return the current swr without updating the global status.
+/*
+ * Take multiple power readings from the tuner and calculate the average.
+ */
 float check_swr(int samples) {
   int fwd, ref, tmp1, tmp2;
   int i;
@@ -184,6 +217,9 @@ float check_swr(int samples) {
   return get_swr(fwd, ref); 
 }
 
+/*
+ * Set the tuner to the specified L-network parameter.
+ */
 int set_tuner(int fd, int ind, int cap, int nc) {
   char buff[32];
   int c, i;
@@ -215,6 +251,11 @@ int set_tuner(int fd, int ind, int cap, int nc) {
   return 0;
 }
 
+/*
+ * L network setting function used for the fine tuning feature.
+ *  lc - 0 for inductor, 1 for capacitor
+ *  diff - difference against the current lval or cval.
+ */
 void fine_set_lc(int diff, int lc) {
   if (lc) { // C
     set_tuner(fd, lval, cval + diff, nval);
@@ -225,11 +266,13 @@ void fine_set_lc(int diff, int lc) {
   }
 }
 
-// assume the LC is already farely close.
-// lc=0 for L, lc=1 for C
 
 #define TU_SAMPLES 30
 
+/*
+ * Fine tuning one paramter (L or C).
+ *  lc - 0 for L, 1 for C
+ */
 int fine_tune(int lc) {
   float org_swr, min_swr, tmp;
   int min, direction, start;
@@ -284,13 +327,20 @@ int fine_tune(int lc) {
     lval = min;
 }
 
+/* Automatically find a good matching parameters.  This is only meant for
+ * fine tuning. The tuner should already be close to the optimal matching
+ * condition.
+ */
 int tune() {
   int swr, fwd, ref;
   int i, tmp, min_swr, min_c, res;
-  
+
+  // Is there enough power present?
   check_swr(10);
   if (pswr.fwd < 5)
     return 1;
+
+  // do one iteration of fine tuning of L and C.
   fine_tune(0);
   fine_tune(1);
 

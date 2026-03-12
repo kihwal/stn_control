@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdint.h>
 
 uint16_t tu_cal_adc[100] = {
@@ -74,3 +75,10 @@ float get_watts(uint16_t raw) {
   return power;
 }
 
+void print_all() {
+  int i;
+
+  for (i = 0; i < 1024; i++) {
+    printf("%d %4.1f\n", i, get_watts(i));
+  }
+}
