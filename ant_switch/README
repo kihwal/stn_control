@@ -1,0 +1,47 @@
+A Raspberry Pi Pico is used to control these.
+- 4-port relay controlled antenna switch
+- 2-way transfer switch (2x 2-port coax switch)
+
+The control is done through one button. One short press to cycle through the ports. 
+A long press ~ 1.5 seconds switches between the antenna selector (ANT) and the transfer
+switch (XFR). 
+
+The WIZnet Ethernet Hat for Pico is used to allow the control over the network. The
+core 0 handles the network finctions while core 1 handles the button presses and LCD
+updates.  DHCP is used for the network setup. The network link sensing logic allows
+automatic recovery of the TCP service from DHCP or link outages. A simple http server
+runs on port 3209.
+
+Supported requests
+- GET /status  : returns the current antenna and transfer port numbers separated bya comma.
+- GET /set?a=n : sets the antenna port to n (1-4).
+- GET /set?x=n : sets the transfer port to n (1-2).
+
+The individual coax relays are grounded on one leg and actuated by applying +12V DC. For
+this reason, an additional 4-port relay board is used to interface the Pico and the
+relays. R1 (relay1) is used to switch between the transfer port 1 and 2. Other 3 relays
+are used to actuate one of the 4 antenna switching relays.
+
+A1 - A4 : Relays on the 4-port antenna switch
+T1 - T2 : Relays on the transfer switch. Two relays tied together.
+NC : Normally closed contact of the relay
+NO : Normally open contact of the relay
+COM: Common contact
+
+      R1 R2 R3 R4
+ T1   0  x  x  x
+ T2   1  x  x  x
+ A1   x  0  0  0
+ A2   x  0  1  0
+ A3   x  1  0  0
+ A4   x  1  0  1
+
+Control elay connections
+
+    COM  NC    NO
+R1  12V  T1    T2
+R2  12V  R3COM R4COM
+R3  R2NC A1    A2
+R4  R2NO A3    A4
+
+Copyright (C) 2023, K9SUL, Kihwal Lee.
