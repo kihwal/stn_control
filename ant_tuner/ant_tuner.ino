@@ -64,8 +64,15 @@
 #define TU_C7 11
 #define TU_NC  7  // L network configuration
 
-#define TU_PWR_FWD 19
-#define TU_PWR_REF 18
+//#define TU_PWR_FWD 19
+//#define TU_PWR_REF 18
+
+// use an external coupler
+// A Telepost LPC-50x pin 3 and 5 are connected to 17 and 16.
+// pin 1 is +12V, pin 7 is gnd. The max output is 10V, so they
+// are fed through a voltage divider (100k+100k).
+#define TU_PWR_FWD 17
+#define TU_PWR_REF 16
 
 #define TU_NC_HIZ 0
 #define TU_NC_LOZ 1
