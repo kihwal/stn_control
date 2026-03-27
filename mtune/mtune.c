@@ -50,9 +50,11 @@ int lval, cval, nval;     // L-network parameters
 int cfreq;                // current frequency, if known.
 int rigctl_connected = 0; // conection made to a rigctl host
 WINDOW *status_win;
+int praw = 0;
 
 // config variables
 char *tuner_device, *rigctl_host_port, *ant_switch_host_port;
+int show_net_power = 0;
 
 /*
  * Read the config file
@@ -81,6 +83,8 @@ void load_config(const char *filename) {
       } else if (strcmp(key, "ant_switch_host_port") == 0) {
         ant_switch_host_port = strdup(value);
         printf("%s=%s\n", key, value);
+      } else if (strcmp(key, "show_net_power") == 0) {
+        show_net_power = atoi(value);
       }
     }
   }
@@ -98,6 +102,9 @@ void load_config(const char *filename) {
  */
 float get_swr (int fwd, int ref) {
   float vf, vr;
+
+  // save the raw number
+  praw = fwd;
 
   // convert the sensor readings to power watts
   pswr.fwd = get_watts(fwd);
@@ -238,8 +245,17 @@ int read_power(int fd, int *fwd, int *ref) {
  * Update the UI of the power and the swr.
  */
 void update_power_status() {
-  mvprintw(5, 2, "FWD %4.1fW, REF %4.1fW, SWR %1.2f:1   ", (pswr.fwd - pswr.ref), pswr.ref, pswr.swr);
-  move(10, 47);
+  float f;
+  if (show_net_power)
+    f = pswr.fwd - pswr.ref;
+  else
+    f = pswr.fwd;
+#ifdef TU_SHOW_RAW_PWR
+  mvprintw(5, 2, "FWD %4.1fW, REF %4.1fW, SWR %1.2f:1 RAW: %d   ", f, pswr.ref, pswr.swr, praw);
+#else
+  mvprintw(5, 2, "FWD %4.1fW, REF %4.1fW, SWR %1.2f:1   ", f, pswr.ref, pswr.swr);
+#endif
+  move(11, 2);
   refresh();
 }
 
@@ -328,7 +344,7 @@ void fine_set_lc(int diff, int lc) {
 }
 
 
-#define TU_SAMPLES 20
+#define TU_SAMPLES 10
 
 /*
  * Fine tuning one paramter (L or C).
@@ -650,12 +666,12 @@ int main() {
   mvprintw(0, 2, "Remote Tuner by K9SUL");
   attroff(A_BOLD);
   
-  mvprintw(3, 2, "L = %3d, C = %3d, %s, F = %5d kHz (rigctl %3s)", lval, cval, (nval == TU_NC_HIZ) ? "Hi-Z" : "Lo-Z", cfreq, follow_freq?"ON":"OFF");
-  mvprintw(8, 2, "Inductance(s,d), Capacitance(j,k), Network(n)");
-  mvprintw(9, 2, "Enter Frequency(f), Follow Frequency(g)");
-  mvprintw(10, 2, "Fine Tune(t), Long Tune(y) Reset(r), Quit(q):");
+  mvprintw(3, 2, "L = %3d, C = %3d, %s, F = %5d kHz (tracking %3s)", lval, cval, (nval == TU_NC_HIZ) ? "Hi-Z" : "Lo-Z", cfreq, follow_freq?"ON":"OFF");
+  mvprintw( 8, 2, "Inductance(s,d)   Capacitance(j,k)   Network(n)     Reset(r)");
+  mvprintw( 9, 2, "Enter freq(f)     Track trx(g)       Fine tune(t)   Long Tune(y)");
+  mvprintw(10, 2, "Select databank(b)                                  Quit(q)");
   mvprintw(12, 1, "----------------------- LOG -----------------------");
-  move(10,47);
+  move(11,2);
 
   // read in the tune data file
   read_tune_data();
@@ -769,7 +785,7 @@ int main() {
         endwin();
         return 1;
       }
-      mvprintw(3, 2, "L = %3d, C = %3d, %s, F = %5d kHz (rigctl %3s)", lval, cval, (nval == TU_NC_HIZ) ? "Hi-Z" : "Lo-Z", cfreq, follow_freq?"ON":"OFF");
+      mvprintw(3, 2, "L = %3d, C = %3d, %s, F = %5d kHz (tracking %3s)", lval, cval, (nval == TU_NC_HIZ) ? "Hi-Z" : "Lo-Z", cfreq, follow_freq?"ON":"OFF");
     }
 
     //update_power_swr();
