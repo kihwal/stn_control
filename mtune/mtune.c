@@ -38,6 +38,8 @@
 // If not set, voltages will be used.
 //#define USE_POWER
 
+#define TU_SHOW_RAW_PWR
+
 struct tu_power_swr {
   float fwd; // forward power
   float ref; // reflected power
@@ -235,9 +237,9 @@ int read_power(int fd, int *fwd, int *ref) {
 
   // parse the result from back.
   buff[10] = 0;
-  sscanf(buff + 6, "%d", fwd);
+  sscanf(buff + 6, "%d", ref);
   buff[6] = 0;
-  sscanf(buff + 2, "%d", ref);
+  sscanf(buff + 2, "%d", fwd);
   return 0;
 }
 
@@ -344,7 +346,7 @@ void fine_set_lc(int diff, int lc) {
 }
 
 
-#define TU_SAMPLES 10
+#define TU_SAMPLES 1
 
 /*
  * Fine tuning one paramter (L or C).
@@ -422,7 +424,7 @@ int tune(int long_tune) {
   float swr, prev_swr;
   int i, pl, pc, pn, tmp;
 
-  prev_swr = check_swr(20);
+  prev_swr = check_swr(1);
   pl = lval;
   pc = cval;
   pn = nval;
@@ -450,9 +452,9 @@ int tune(int long_tune) {
     // Check the network configuration.
     wprintw(status_win, "Checking alternate network configuration.\n");
     tmp = (nval == TU_NC_HIZ) ? TU_NC_LOZ : TU_NC_HIZ;
-    swr = check_swr(10);
+    swr = check_swr(1);
     set_tuner(fd, lval, cval, tmp);
-    if (swr > check_swr(20)) {
+    if (swr > check_swr(1)) {
       // the alternate config is better.
       nval = tmp;
       fine_tune(0);
@@ -462,7 +464,7 @@ int tune(int long_tune) {
       set_tuner(fd, lval, cval, nval);
     }
 
-    swr = check_swr(20); 
+    swr = check_swr(1); 
     if (swr < 1.20f) {
       i++;
       break;
@@ -483,7 +485,7 @@ int tune(int long_tune) {
     }
   }
 
-  swr = check_swr(5);
+  swr = check_swr(1);
   wprintw(status_win, "Done tuning in %d iterations. Final SWR=%.2f\n", i, swr);
   wrefresh(status_win);
 
@@ -789,7 +791,7 @@ int main() {
     }
 
     //update_power_swr();
-    check_swr(10);
+    check_swr(1);
     update_power_status();
   }
   delwin(status_win);
