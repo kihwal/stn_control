@@ -98,6 +98,7 @@ unsigned long last_update;
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 #ifdef TU_CAL_USE_INTERNAL
+// internal coupler with 20:1 transformers
 #define TU_CAL_TBL_SIZE 100
 
 uint16_t tu_cal_adc[TU_CAL_TBL_SIZE] = {
@@ -125,6 +126,7 @@ uint16_t tu_cal_watts[TU_CAL_TBL_SIZE] = {
 1037,1056,1065,1071,1087,1095,1112,1122,1184,1207};
 
 #else
+// external coupler, Telepost LPC-502
 #define TU_CAL_TBL_SIZE 90
 
 uint16_t tu_cal_adc[TU_CAL_TBL_SIZE] = {
@@ -230,6 +232,8 @@ void update_pwr_swr() {
   double vf = sqrt(pwr*50.0f);
   double vr = sqrt(ref*50.0f);
   swr = (int)(100*(vf+vr)/(vf-vr));
+  if (swr < 100)
+    swr = 100;
   // save the net power
   pwr = pwr - ref;
   if (pwr_max < pwr)
@@ -267,18 +271,6 @@ void setup() {
 }
 
 void loop() {
-/*
-  unsigned long start_time = millis();
-  while(Serial.available() == 0) {
-    // wait for data. Backlight times out in 10 min.
-    if (millis() - start_time > 180000) {
-      lcd.noBacklight();
-    }
-  }
-  // wake up if necessary.
-  start_time = millis();
-  lcd.backlight();
-*/
   update_pwr_swr();
   update_lcd();
   
